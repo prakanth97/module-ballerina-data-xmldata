@@ -193,17 +193,32 @@ public class XmlTraversal {
                     }
                 }
                 case TypeTags.MAP_TAG -> {
-                    RecordType recordType = TypeCreator.createRecordType("$anonType$", currentFieldType.getPackage(), 0,
-                            new HashMap<>(), ((MapType) currentFieldType).getConstrainedType(), false, 0);
-                    currentNode = updateNextRecord(xmlItem, recordType, fieldName,
-                            currentFieldType, mapValue, analyzerData);
-                    traverseXml(xmlItem.getChildrenSeq(), recordType, analyzerData);
+                    updateNextMap(currentFieldType, analyzerData);
+                    currentNode = updateNextValue(currentFieldType, fieldName, currentFieldType, mapValue,
+                            analyzerData);
+                    traverseXml(xmlItem.getChildrenSeq(), currentFieldType, analyzerData);
                     DataUtils.validateRequiredFields((BMap<BString, Object>) currentNode, analyzerData);
                     DataUtils.removeExpectedTypeStacks(analyzerData);
                     currentNode = analyzerData.nodesStack.pop();
+                    return;
+                }
+                case TypeTags.JSON_TAG, TypeTags.ANYDATA_TAG -> {
+                    updateNextMap(currentFieldType, analyzerData);
+                    convertWithRestType(xmlItem, currentFieldType, analyzerData);
+                    DataUtils.removeExpectedTypeStacks(analyzerData);
                 }
             }
             traverseXml(xmlItem.getChildrenSeq(), currentFieldType, analyzerData);
+        }
+
+        private void updateNextMap(Type fieldType, XmlAnalyzerData analyzerData) {
+            if (fieldType.getTag() == TypeTags.MAP_TAG) {
+                analyzerData.restTypes.push(((MapType) fieldType).getConstrainedType());
+            } else {
+                analyzerData.restTypes.push(fieldType);
+            }
+            analyzerData.fieldHierarchy.push(new HashMap<>());
+            analyzerData.attributeHierarchy.push(new HashMap<>());
         }
 
         private BMap<BString, Object> updateNextRecord(BXmlItem xmlItem, RecordType recordType, String fieldName,
@@ -218,10 +233,18 @@ public class XmlTraversal {
             return nextValue;
         }
 
-        private BMap<BString, Object> updateNextValue(RecordType recordType, String fieldName, Type fieldType,
+        private BMap<BString, Object> updateNextValue(Type type, String fieldName, Type fieldType,
                                        BMap<BString, Object> currentMapValue, XmlAnalyzerData analyzerData) {
             analyzerData.currentField = null;
-            BMap<BString, Object> nextValue = ValueCreator.createRecordValue(recordType);
+
+            BMap<BString, Object> nextValue;
+            switch (type.getTag()) {
+                case TypeTags.RECORD_TYPE_TAG -> nextValue = ValueCreator.createRecordValue((RecordType) type);
+                case TypeTags.MAP_TAG -> nextValue = ValueCreator.createMapValue((MapType) type);
+                case TypeTags.ANYDATA_TAG, TypeTags.JSON_TAG ->
+                        nextValue = ValueCreator.createMapValue(TypeCreator.createMapType(type));
+                default -> throw DiagnosticLog.error(DiagnosticErrorCode.UNSUPPORTED_TYPE, type);
+            }
 
             Object temp = currentMapValue.get(StringUtils.fromString(fieldName));
             if (temp instanceof BArray) {
